@@ -33,7 +33,7 @@ while True:
 
     face_locations = face_recognition.face_locations(rgb_small_frame, model='hog')
 
-    # Dibujar rectángulos antes de decidir si se reconoce
+    # Dibujar rectángulos
     for (top, right, bottom, left) in face_locations:
         top_scaled = top * 4
         right_scaled = right * 4
@@ -41,19 +41,26 @@ while True:
         left_scaled = left * 4
         cv2.rectangle(frame, (left_scaled, top_scaled), (right_scaled, bottom_scaled), (0, 255, 0), 2)
 
-    # Si pasó suficiente tiempo, hacer reconocimiento
+    # Reconocimiento si hay cooldown libre
     if frame_count % process_every_n_frames == 0 and (current_time - last_recognition_time > RECOGNITION_COOLDOWN):
         face_encodings = face_recognition.face_encodings(rgb_small_frame, face_locations)
 
+        recognized = False
         for face_encoding in face_encodings:
             matches = face_recognition.compare_faces(known_faces, face_encoding)
             if True in matches:
                 matched_idx = matches.index(True)
                 print(known_names[matched_idx])
-                last_recognition_time = current_time
+                recognized = True
                 break
 
-    # Mostrar temporizador en pantalla
+        if not recognized and face_encodings:
+            print("Try again")
+
+        if face_encodings:
+            last_recognition_time = current_time  # Aplica cooldown aunque no haya match
+
+    # Mostrar cooldown en pantalla
     cooldown_remaining = max(0, int(RECOGNITION_COOLDOWN - (current_time - last_recognition_time)))
     cv2.putText(frame, f'Cooldown: {cooldown_remaining}s', (10, 30),
                 cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 255, 255), 2)
