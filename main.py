@@ -1,24 +1,56 @@
 import cv2
 import face_recognition
-import os
+import requests
+import numpy as np
 import time
 
-# Cargar imágenes y codificaciones
+# -----------------------------
+# CONFIG
+# -----------------------------
+API_URL = "http://your-backend-domain.com/api/faces"        # GET: faces list
+REPORT_URL = "http://your-backend-domain.com/api/recognized"  # POST: recognized user
+CAM_INDEX = 0   # 0 = default webcam, change if needed
+PROCESS_EVERY_N_FRAMES = 3
+RECOGNITION_COOLDOWN = 10  # seconds
+# -----------------------------
+
+# Load known faces from backend
+print("Fetching faces from backend...")
+resp = requests.get(API_URL)
+resp.raise_for_status()
+faces_data = resp.json()
+
 known_faces = []
 known_names = []
-for filename in os.listdir('faces'):
-    path = os.path.join('faces', filename)
-    image = face_recognition.load_image_file(path)
-    encodings = face_recognition.face_encodings(image)
-    if encodings:
-        known_faces.append(encodings[0])
-        known_names.append(os.path.splitext(filename)[0])
 
-cap = cv2.VideoCapture(0)
-process_every_n_frames = 3
+for item in faces_data:
+    name = item["name"]
+    url = item["url"]
+
+    try:
+        img_resp = requests.get(url, stream=True)
+        img_resp.raise_for_status()
+        img_array = np.asarray(bytearray(img_resp.content), dtype=np.uint8)
+        image = cv2.imdecode(img_array, cv2.IMREAD_COLOR)
+        rgb_image = cv2.cvtColor(image, cv2.COLOR_BGR2RGB)
+
+        encodings = face_recognition.face_encodings(rgb_image)
+        if encodings:
+            known_faces.append(encodings[0])
+            known_names.append(name)
+            print(f"[OK] Loaded {name}")
+        else:
+            print(f"[WARN] No face found in {url}")
+
+    except Exception as e:
+        print(f"[ERROR] Could not load {name}: {e}")
+
+print(f"Total loaded: {len(known_faces)} faces")
+
+# Video capture
+cap = cv2.VideoCapture(CAM_INDEX)
 frame_count = 0
 last_recognition_time = 0
-RECOGNITION_COOLDOWN = 10  # segundos
 
 while True:
     ret, frame = cap.read()
@@ -28,21 +60,19 @@ while True:
     current_time = time.time()
     frame_count += 1
 
+    # Resize for speed
     small_frame = cv2.resize(frame, (0, 0), fx=0.25, fy=0.25)
     rgb_small_frame = cv2.cvtColor(small_frame, cv2.COLOR_BGR2RGB)
 
+    # Detect faces
     face_locations = face_recognition.face_locations(rgb_small_frame, model='hog')
 
-    # Dibujar rectángulos
+    # Draw rectangles
     for (top, right, bottom, left) in face_locations:
-        top_scaled = top * 4
-        right_scaled = right * 4
-        bottom_scaled = bottom * 4
-        left_scaled = left * 4
-        cv2.rectangle(frame, (left_scaled, top_scaled), (right_scaled, bottom_scaled), (0, 255, 0), 2)
+        cv2.rectangle(frame, (left*4, top*4), (right*4, bottom*4), (0, 255, 0), 2)
 
-    # Reconocimiento si hay cooldown libre
-    if frame_count % process_every_n_frames == 0 and (current_time - last_recognition_time > RECOGNITION_COOLDOWN):
+    # Recognition (every N frames & cooldown)
+    if frame_count % PROCESS_EVERY_N_FRAMES == 0 and (current_time - last_recognition_time > RECOGNITION_COOLDOWN):
         face_encodings = face_recognition.face_encodings(rgb_small_frame, face_locations)
 
         recognized = False
@@ -50,7 +80,15 @@ while True:
             matches = face_recognition.compare_faces(known_faces, face_encoding)
             if True in matches:
                 matched_idx = matches.index(True)
-                print(known_names[matched_idx])
+                user_name = known_names[matched_idx]
+                print(f"[RECOGNIZED] {user_name}")
+
+                # Report to backend
+                try:
+                    requests.post(REPORT_URL, json={"name": user_name})
+                except Exception as e:
+                    print(f"[ERROR] Could not report recognition: {e}")
+
                 recognized = True
                 break
 
@@ -58,14 +96,15 @@ while True:
             print("Try again")
 
         if face_encodings:
-            last_recognition_time = current_time  # Aplica cooldown aunque no haya match
+            last_recognition_time = current_time  # reset cooldown even if not recognized
 
-    # Mostrar cooldown en pantalla
+    # Show cooldown
     cooldown_remaining = max(0, int(RECOGNITION_COOLDOWN - (current_time - last_recognition_time)))
     cv2.putText(frame, f'Cooldown: {cooldown_remaining}s', (10, 30),
                 cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 255, 255), 2)
 
-    cv2.imshow('Detección y reconocimiento', frame)
+    # Display video
+    cv2.imshow('Face Recognition', frame)
     if cv2.waitKey(1) & 0xFF == ord('q'):
         break
 
