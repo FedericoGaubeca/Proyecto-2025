@@ -7,8 +7,8 @@ import time
 # -----------------------------
 # CONFIG
 # -----------------------------
-API_URL = "http://your-backend-domain.com/api/faces"        # GET: faces list
-REPORT_URL = "http://your-backend-domain.com/api/recognized"  # POST: recognized user
+API_URL = "https://centinel-ai2025.vercel.app/person/getPersonsIA"        # GET: faces list
+REPORT_URL = "https://centinel-ai2025.vercel.app/person/lastRecognized"   # POST: recognized user
 CAM_INDEX = 0   # 0 = default webcam, change if needed
 PROCESS_EVERY_N_FRAMES = 3
 RECOGNITION_COOLDOWN = 10  # seconds
@@ -21,11 +21,11 @@ resp.raise_for_status()
 faces_data = resp.json()
 
 known_faces = []
-known_names = []
+known_ids = []
 
 for item in faces_data:
-    name = item["name"]
-    url = item["url"]
+    person_id = item["person_ID"]
+    url = item["photo"]
 
     try:
         img_resp = requests.get(url, stream=True)
@@ -37,13 +37,13 @@ for item in faces_data:
         encodings = face_recognition.face_encodings(rgb_image)
         if encodings:
             known_faces.append(encodings[0])
-            known_names.append(name)
-            print(f"[OK] Loaded {name}")
+            known_ids.append(person_id)
+            print(f"[OK] Loaded person_ID={person_id}")
         else:
             print(f"[WARN] No face found in {url}")
 
     except Exception as e:
-        print(f"[ERROR] Could not load {name}: {e}")
+        print(f"[ERROR] Could not load person_ID={person_id}: {e}")
 
 print(f"Total loaded: {len(known_faces)} faces")
 
@@ -80,12 +80,16 @@ while True:
             matches = face_recognition.compare_faces(known_faces, face_encoding)
             if True in matches:
                 matched_idx = matches.index(True)
-                user_name = known_names[matched_idx]
-                print(f"[RECOGNIZED] {user_name}")
+                person_id = known_ids[matched_idx]
+                print(f"[RECOGNIZED] person_ID={person_id}")
 
                 # Report to backend
                 try:
-                    requests.post(REPORT_URL, json={"name": user_name})
+                    res = requests.get(REPORT_URL, json={"person_ID": person_id})
+                    if res.status_code == 200:
+                        print(f"[SENT] Reported person_ID={person_id} to backend")
+                    else:
+                        print(f"[ERROR] Backend returned status {res.status_code}")
                 except Exception as e:
                     print(f"[ERROR] Could not report recognition: {e}")
 
